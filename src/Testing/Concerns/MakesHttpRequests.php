@@ -10,7 +10,6 @@ use PHPUnit_Framework_Assert as PHPUnit;
 
 trait MakesHttpRequests
 {
-    use InteractsWithPages;
 
     /**
      * The last response returned by the application.
