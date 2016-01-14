@@ -385,38 +385,6 @@ trait MakesHttpRequests
     }
 
     /**
-     * Asserts that the response contains the given cookie and equals the optional value.
-     *
-     * @param  string  $cookieName
-     * @param  mixed  $value
-     * @return $this
-     */
-    protected function seeCookie($cookieName, $value = null)
-    {
-        $headers = $this->response->headers;
-
-        $exist = false;
-
-        foreach ($headers->getCookies() as $cookie) {
-            if ($cookie->getName() === $cookieName) {
-                $exist = true;
-                break;
-            }
-        }
-
-        $this->assertTrue($exist, "Cookie [{$cookieName}] not present on response.");
-
-        if (! is_null($value)) {
-            $this->assertEquals(
-                $cookie->getValue(), $value,
-                "Cookie [{$cookieName}] was found, but value [{$cookie->getValue()}] does not match [{$value}]."
-            );
-        }
-
-        return $this;
-    }
-
-    /**
      * Define a set of server variables to be sent with the requests.
      *
      * @param  array  $server
@@ -443,7 +411,6 @@ trait MakesHttpRequests
      */
     public function call($method, $uri, $parameters = [], $cookies = [], $files = [], $server = [], $content = null)
     {
-        $kernel = $this->app->make('Illuminate\Contracts\Http\Kernel');
 
         $this->currentUri = $this->prepareUrlForRequest($uri);
 
@@ -452,11 +419,9 @@ trait MakesHttpRequests
             $cookies, $files, array_replace($this->serverVariables, $server), $content
         );
 
-        $response = $kernel->handle($request);
-
-        $kernel->terminate($request, $response);
-
-        return $this->response = $response;
+        return $this->response = $this->app->prepareResponse(
+            $this->app->handle($request)
+        );
     }
 
     /**
@@ -584,78 +549,6 @@ trait MakesHttpRequests
         $actual = $this->response->getStatusCode();
 
         return PHPUnit::assertEquals($code, $this->response->getStatusCode(), "Expected status code {$code}, got {$actual}.");
-    }
-
-    /**
-     * Assert that the response view has a given piece of bound data.
-     *
-     * @param  string|array  $key
-     * @param  mixed  $value
-     * @return void
-     */
-    public function assertViewHas($key, $value = null)
-    {
-        if (is_array($key)) {
-            return $this->assertViewHasAll($key);
-        }
-
-        if (! isset($this->response->original) || ! $this->response->original instanceof View) {
-            return PHPUnit::assertTrue(false, 'The response was not a view.');
-        }
-
-        if (is_null($value)) {
-            PHPUnit::assertArrayHasKey($key, $this->response->original->getData());
-        } else {
-            PHPUnit::assertEquals($value, $this->response->original->$key);
-        }
-    }
-
-    /**
-     * Assert that the view has a given list of bound data.
-     *
-     * @param  array  $bindings
-     * @return void
-     */
-    public function assertViewHasAll(array $bindings)
-    {
-        foreach ($bindings as $key => $value) {
-            if (is_int($key)) {
-                $this->assertViewHas($value);
-            } else {
-                $this->assertViewHas($key, $value);
-            }
-        }
-    }
-
-    /**
-     * Assert that the response view is missing a piece of bound data.
-     *
-     * @param  string  $key
-     * @return void
-     */
-    public function assertViewMissing($key)
-    {
-        if (! isset($this->response->original) || ! $this->response->original instanceof View) {
-            return PHPUnit::assertTrue(false, 'The response was not a view.');
-        }
-
-        PHPUnit::assertArrayNotHasKey($key, $this->response->original->getData());
-    }
-
-    /**
-     * Assert whether the client was redirected to a given URI.
-     *
-     * @param  string  $uri
-     * @param  array   $with
-     * @return void
-     */
-    public function assertRedirectedTo($uri, $with = [])
-    {
-        PHPUnit::assertInstanceOf('Illuminate\Http\RedirectResponse', $this->response);
-
-        PHPUnit::assertEquals($this->app['url']->to($uri), $this->response->headers->get('Location'));
-
-        $this->assertSessionHasAll($with);
     }
 
     /**
