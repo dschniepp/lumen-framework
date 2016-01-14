@@ -1,6 +1,6 @@
 <?php
 
-namespace Illuminate\Foundation\Testing\Concerns;
+namespace Laravel\Lumen\Testing\Concerns;
 
 use Mockery;
 use Exception;

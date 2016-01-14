@@ -1,6 +1,6 @@
 <?php
 
-namespace Illuminate\Foundation\Testing;
+namespace Laravel\Lumen\Testing;
 
 trait DatabaseMigrations
 {
