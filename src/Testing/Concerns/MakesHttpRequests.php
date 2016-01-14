@@ -1,13 +1,17 @@
 <?php
 
-namespace Laravel\Lumen\Testing\Concerns;
+namespace Illuminate\Foundation\Testing\Concerns;
 
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
+use Illuminate\Contracts\View\View;
 use PHPUnit_Framework_Assert as PHPUnit;
 
 trait MakesHttpRequests
 {
+    use InteractsWithPages;
+
     /**
      * The last response returned by the application.
      *
@@ -21,6 +25,25 @@ trait MakesHttpRequests
      * @var string
      */
     protected $currentUri;
+
+    /**
+     * Additional server variables for the request.
+     *
+     * @var array
+     */
+    protected $serverVariables = [];
+
+    /**
+     * Disable middleware for the test.
+     *
+     * @return $this
+     */
+    public function withoutMiddleware()
+    {
+        $this->app->instance('middleware.disable', true);
+
+        return $this;
+    }
 
     /**
      * Visit the given URI with a JSON request.
@@ -179,11 +202,11 @@ trait MakesHttpRequests
      */
     public function seeJsonEquals(array $data)
     {
-        $actual = json_encode(array_sort_recursive(
+        $actual = json_encode(Arr::sortRecursive(
             json_decode($this->response->getContent(), true)
         ));
 
-        $this->assertEquals(json_encode(array_sort_recursive($data)), $actual);
+        $this->assertEquals(json_encode(Arr::sortRecursive($data)), $actual);
 
         return $this;
     }
@@ -244,6 +267,8 @@ trait MakesHttpRequests
                 $this->assertArrayHasKey($value, $responseData);
             }
         }
+
+        return $this;
     }
 
     /**
@@ -257,17 +282,11 @@ trait MakesHttpRequests
     {
         $method = $negate ? 'assertFalse' : 'assertTrue';
 
-        $actual = json_decode($this->response->getContent(), true);
-
-        if (is_null($actual) || $actual === false) {
-            return $this->fail('Invalid JSON was returned from the route. Perhaps an exception was thrown?');
-        }
-
-        $actual = json_encode(array_sort_recursive(
-            (array) $actual
+        $actual = json_encode(Arr::sortRecursive(
+            (array) $this->decodeResponseJson()
         ));
 
-        foreach (array_sort_recursive($data) as $key => $value) {
+        foreach (Arr::sortRecursive($data) as $key => $value) {
             $expected = $this->formatToExpectedJson($key, $value);
 
             $this->{$method}(
@@ -277,6 +296,35 @@ trait MakesHttpRequests
         }
 
         return $this;
+    }
+
+    /**
+     * Assert that the response is a superset of the given JSON.
+     *
+     * @param  array  $data
+     * @return $this
+     */
+    protected function seeJsonSubset(array $data)
+    {
+        $this->assertArraySubset($data, $this->decodeResponseJson());
+
+        return $this;
+    }
+
+    /**
+     * Validate and return the decoded response JSON.
+     *
+     * @return array
+     */
+    protected function decodeResponseJson()
+    {
+        $decodedResponse = json_decode($this->response->getContent(), true);
+
+        if (is_null($decodedResponse) || $decodedResponse === false) {
+            $this->fail('Invalid JSON was returned from the route. Perhaps an exception was thrown?');
+        }
+
+        return $decodedResponse;
     }
 
     /**
@@ -302,6 +350,87 @@ trait MakesHttpRequests
     }
 
     /**
+     * Asserts that the status code of the response matches the given code.
+     *
+     * @param  int  $status
+     * @return $this
+     */
+    protected function seeStatusCode($status)
+    {
+        $this->assertEquals($status, $this->response->getStatusCode());
+
+        return $this;
+    }
+
+    /**
+     * Asserts that the response contains the given header and equals the optional value.
+     *
+     * @param  string  $headerName
+     * @param  mixed  $value
+     * @return $this
+     */
+    protected function seeHeader($headerName, $value = null)
+    {
+        $headers = $this->response->headers;
+
+        $this->assertTrue($headers->has($headerName), "Header [{$headerName}] not present on response.");
+
+        if (! is_null($value)) {
+            $this->assertEquals(
+                $headers->get($headerName), $value,
+                "Header [{$headerName}] was found, but value [{$headers->get($headerName)}] does not match [{$value}]."
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Asserts that the response contains the given cookie and equals the optional value.
+     *
+     * @param  string  $cookieName
+     * @param  mixed  $value
+     * @return $this
+     */
+    protected function seeCookie($cookieName, $value = null)
+    {
+        $headers = $this->response->headers;
+
+        $exist = false;
+
+        foreach ($headers->getCookies() as $cookie) {
+            if ($cookie->getName() === $cookieName) {
+                $exist = true;
+                break;
+            }
+        }
+
+        $this->assertTrue($exist, "Cookie [{$cookieName}] not present on response.");
+
+        if (! is_null($value)) {
+            $this->assertEquals(
+                $cookie->getValue(), $value,
+                "Cookie [{$cookieName}] was found, but value [{$cookie->getValue()}] does not match [{$value}]."
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Define a set of server variables to be sent with the requests.
+     *
+     * @param  array  $server
+     * @return $this
+     */
+    protected function withServerVariables(array $server)
+    {
+        $this->serverVariables = $server;
+
+        return $this;
+    }
+
+    /**
      * Call the given URI and return the Response.
      *
      * @param  string  $method
@@ -315,16 +444,79 @@ trait MakesHttpRequests
      */
     public function call($method, $uri, $parameters = [], $cookies = [], $files = [], $server = [], $content = null)
     {
+        $kernel = $this->app->make('Illuminate\Contracts\Http\Kernel');
+
         $this->currentUri = $this->prepareUrlForRequest($uri);
 
         $request = Request::create(
             $this->currentUri, $method, $parameters,
-            $cookies, $files, $server, $content
+            $cookies, $files, array_replace($this->serverVariables, $server), $content
         );
 
-        return $this->response = $this->app->prepareResponse(
-            $this->app->handle($request)
-        );
+        $response = $kernel->handle($request);
+
+        $kernel->terminate($request, $response);
+
+        return $this->response = $response;
+    }
+
+    /**
+     * Call the given HTTPS URI and return the Response.
+     *
+     * @param  string  $method
+     * @param  string  $uri
+     * @param  array   $parameters
+     * @param  array   $cookies
+     * @param  array   $files
+     * @param  array   $server
+     * @param  string  $content
+     * @return \Illuminate\Http\Response
+     */
+    public function callSecure($method, $uri, $parameters = [], $cookies = [], $files = [], $server = [], $content = null)
+    {
+        $uri = $this->app['url']->secure(ltrim($uri, '/'));
+
+        return $this->response = $this->call($method, $uri, $parameters, $cookies, $files, $server, $content);
+    }
+
+    /**
+     * Call a controller action and return the Response.
+     *
+     * @param  string  $method
+     * @param  string  $action
+     * @param  array   $wildcards
+     * @param  array   $parameters
+     * @param  array   $cookies
+     * @param  array   $files
+     * @param  array   $server
+     * @param  string  $content
+     * @return \Illuminate\Http\Response
+     */
+    public function action($method, $action, $wildcards = [], $parameters = [], $cookies = [], $files = [], $server = [], $content = null)
+    {
+        $uri = $this->app['url']->action($action, $wildcards, true);
+
+        return $this->response = $this->call($method, $uri, $parameters, $cookies, $files, $server, $content);
+    }
+
+    /**
+     * Call a named route and return the Response.
+     *
+     * @param  string  $method
+     * @param  string  $name
+     * @param  array   $routeParameters
+     * @param  array   $parameters
+     * @param  array   $cookies
+     * @param  array   $files
+     * @param  array   $server
+     * @param  string  $content
+     * @return \Illuminate\Http\Response
+     */
+    public function route($method, $name, $routeParameters = [], $parameters = [], $cookies = [], $files = [], $server = [], $content = null)
+    {
+        $uri = $this->app['url']->route($name, $routeParameters);
+
+        return $this->response = $this->call($method, $uri, $parameters, $cookies, $files, $server, $content);
     }
 
     /**
@@ -396,27 +588,118 @@ trait MakesHttpRequests
     }
 
     /**
-     * Asserts that the status code of the response matches the given code.
+     * Assert that the response view has a given piece of bound data.
      *
-     * @param  int  $status
-     * @return $this
+     * @param  string|array  $key
+     * @param  mixed  $value
+     * @return void
      */
-    protected function seeStatusCode($status)
+    public function assertViewHas($key, $value = null)
     {
-        $this->assertResponseStatus($status);
+        if (is_array($key)) {
+            return $this->assertViewHasAll($key);
+        }
 
-        return $this;
+        if (! isset($this->response->original) || ! $this->response->original instanceof View) {
+            return PHPUnit::assertTrue(false, 'The response was not a view.');
+        }
+
+        if (is_null($value)) {
+            PHPUnit::assertArrayHasKey($key, $this->response->original->getData());
+        } else {
+            PHPUnit::assertEquals($value, $this->response->original->$key);
+        }
     }
 
     /**
-     * Disable middleware for the test.
+     * Assert that the view has a given list of bound data.
      *
-     * @return $this
+     * @param  array  $bindings
+     * @return void
      */
-    public function withoutMiddleware()
+    public function assertViewHasAll(array $bindings)
     {
-        $this->app->instance('middleware.disable', true);
+        foreach ($bindings as $key => $value) {
+            if (is_int($key)) {
+                $this->assertViewHas($value);
+            } else {
+                $this->assertViewHas($key, $value);
+            }
+        }
+    }
 
-        return $this;
+    /**
+     * Assert that the response view is missing a piece of bound data.
+     *
+     * @param  string  $key
+     * @return void
+     */
+    public function assertViewMissing($key)
+    {
+        if (! isset($this->response->original) || ! $this->response->original instanceof View) {
+            return PHPUnit::assertTrue(false, 'The response was not a view.');
+        }
+
+        PHPUnit::assertArrayNotHasKey($key, $this->response->original->getData());
+    }
+
+    /**
+     * Assert whether the client was redirected to a given URI.
+     *
+     * @param  string  $uri
+     * @param  array   $with
+     * @return void
+     */
+    public function assertRedirectedTo($uri, $with = [])
+    {
+        PHPUnit::assertInstanceOf('Illuminate\Http\RedirectResponse', $this->response);
+
+        PHPUnit::assertEquals($this->app['url']->to($uri), $this->response->headers->get('Location'));
+
+        $this->assertSessionHasAll($with);
+    }
+
+    /**
+     * Assert whether the client was redirected to a given route.
+     *
+     * @param  string  $name
+     * @param  array   $parameters
+     * @param  array   $with
+     * @return void
+     */
+    public function assertRedirectedToRoute($name, $parameters = [], $with = [])
+    {
+        $this->assertRedirectedTo($this->app['url']->route($name, $parameters), $with);
+    }
+
+    /**
+     * Assert whether the client was redirected to a given action.
+     *
+     * @param  string  $name
+     * @param  array   $parameters
+     * @param  array   $with
+     * @return void
+     */
+    public function assertRedirectedToAction($name, $parameters = [], $with = [])
+    {
+        $this->assertRedirectedTo($this->app['url']->action($name, $parameters), $with);
+    }
+
+    /**
+     * Dump the content from the last response.
+     *
+     * @return void
+     */
+    public function dump()
+    {
+        $content = $this->response->getContent();
+
+        $json = json_decode($content);
+
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $content = $json;
+        }
+
+        dd($content);
     }
 }

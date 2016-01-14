@@ -1,14 +1,9 @@
 <?php
 
-namespace Laravel\Lumen\Testing;
+namespace Illuminate\Foundation\Testing;
 
 trait DatabaseTransactions
 {
-    /**
-     * Begin a database transaction.
-     *
-     * @return void
-     */
     public function beginDatabaseTransaction()
     {
         $this->app->make('db')->beginTransaction();
