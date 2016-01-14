@@ -12,7 +12,6 @@ abstract class TestCase extends PHPUnit_Framework_TestCase
         Concerns\ImpersonatesUsers,
         Concerns\InteractsWithConsole,
         Concerns\InteractsWithDatabase,
-        Concerns\InteractsWithSession,
         Concerns\MocksApplicationServices;
 
     /**
